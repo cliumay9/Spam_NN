@@ -1,0 +1,265 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+#7 Spam Email
+
+
+```{r}
+library(nnet)
+```
+
+
+
+
+```{r}
+# Import pre-splitted training set and test set
+# such that graders can have an easier time to evaluate. 
+
+spamdata=read.csv('./Data/spam_all.csv')
+spam_train =read.csv('./Data/spam_train.csv')
+spam_test = read.csv('./Data/spam_test.csv')
+```
+
+
+```{r}
+rflabs<-c("make", "address", "all", "3d", "our", "over", "remove",
+  "internet","order", "mail", "receive", "will",
+  "people", "report", "addresses","free", "business",
+  "email", "you", "credit", "your", "font","000","money",
+  "hp", "hpl", "george", "650", "lab", "labs",
+  "telnet", "857", "data", "415", "85", "technology", "1999",
+  "parts","pm", "direct", "cs", "meeting", "original", "project",
+  "re","edu", "table", "conference", ";", "(", "[", "!", "$", "#",
+  "CAPAVE", "CAPMAX", "CAPTOT","type")
+```
+
+```{r}
+colnames(spamdata)=rflabs
+colnames(spam_train) =rflabs
+colnames(spam_test) =rflabs
+```
+
+```{r}
+set.seed(444)
+```
+
+
+```{r}
+# Creating 10 data samples table
+datasamples = vector("list",10)
+for (i in (1:10)){
+  indexes = sample(nrow(spam_train))
+  datasamples[[i]] =spam_train[indexes,]
+}
+```
+
+
+a) Choosing number of hidden units (1,2,3,4,5,6,7,8,9,10)
+
+```{r message=FALSE, include=FALSE}
+hiddenunits = NULL
+# Number of hidden units 1 to 10
+  for (n in 1:10){
+    miserr = NULL
+    SE = NULL
+    # going through the data samples created 
+    for (i in 1:10){
+      set.seed = 10*i
+      net = nnet(as.factor(type)~., data = datasamples[[i]],
+                 size = n, rang =0.5, maxit = 100)
+      # initial random weights on [-rang, rang], maxit = max. iteration
+      # Evaluate misclassificaiton
+      yhat = predict(net, spam_test, type = "class")
+      tab = table(yhat, as.factor(spam_test$type))
+      err = 1-sum(diag(tab))/sum(tab)
+      # binding the error rate to the vector misclassification error
+      if (i==1) miserr = err else miserror = rbind(miserr,err)
+      # if (i ==1) SE = sd(err) else SE = rbind(SE, sd(err))
+    }
+    hiddenunits = rbind(hiddenunits, c(unit = n, Mis.Err = mean(miserr))) # SE= sd(yhat)
+  }
+```
+
+```{r}
+hiddenunits
+```
+
+b) Choosing optimal regulaization (0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1)
+
+From part (a), we found out that the optimal unit for number of hidden units is. 
+
+```{r include=FALSE}
+wdecay = NULL
+# Number of hidden units 1 to 10
+  for (n in 1:10){
+    n = n/10
+    miserr = NULL
+    # going through the data samples created 
+    for (i in 1:10){
+      set.seed = 10*i
+      net = nnet(as.factor(type)~., data = datasamples[[i]],
+                 size = 8, rang =0.5, maxit = 100,decay =n)
+      # initial random weights on [-rang, rang], maxit = max. iteration
+      # Evaluate misclassificaiton
+      yhat = predict(net, spam_test, type = "class")
+      tab = table(yhat, as.factor(spam_test$type))
+      err = 1-sum(diag(tab))/sum(tab)
+      # binding the error rate to the vector misclassification error
+      if (i==1) miserr = err else miserror = rbind(miserr,err)
+      
+    }
+    wdecay = rbind(wdecay, c(unit = n, Mis.Err = mean(miserr)))
+  }
+```
+
+```{r}
+wdecay
+```
+
+
+
+c)  Goal: the proportion of misclassified good emails to be less than 1%.
+
+Since it is hard to put 2 for loops in a quote and it will be pretty messy to display, I decided to use R package "caret" to help us tunning by using grid search method. It is possible to include every parameters in our grid but our search time will increase exponentially. For this reason, we will take reference of hiddenunits and weight decay's performance table from (a) and (b). Hidden unit works best from 3- 8 units. weight decay fluctuates from 0.2 and 0.5
+
+```{r warning=FALSE}
+# install.packages("caret", "e1071")
+# install.packages("MLmetrics")
+library(MLmetrics)
+library(caret)
+library(e1071)
+```
+
+```{r}
+# Enabling parallel processing
+#install.packages("doMC")
+library(doMC)
+registerDoMC(cores=4)
+```
+
+
+```{r}
+#Setting up training scheme
+control = trainControl(method = "repeatedcv", number = 10, repeats = 3) 
+```
+
+```{r}
+# having our two parameters in the grid, i.e. hidden units and weight decay
+
+grid = expand.grid(size = c(3,4,5,6,7,8,9,10), decay = seq(0,0.3,by =0.05)) 
+
+```
+
+
+```{r include=FALSE}
+# Use gridsearch to tune our parameter
+model = train(as.factor(type)~., data = spam_train, method = "nnet", trControl = control, tuneGrid = grid)
+# tuneGrid = grid, tuneLength = 10
+
+```
+
+
+```{r}
+print(model)
+```
+
+
+```{r}
+plot(model)
+```
+
+
+Now we use the tuned model to predict spam_test.
+
+```{r}
+net = nnet(as.factor(type)~., data = datasamples[[i]],
+                 size = model$bestTune[[1]], rang =0.5, maxit = 100,decay =model$bestTune[[2]])
+```
+
+```{r}
+yhat = predict(net, spam_test, type = "raw") #type = "class"
+```
+
+After obtaining the tuned prediction, we should also tune our threshold in order to minimize False Positive rate.
+
+
+Our objective is to Out of all the good emails, 1% of them are misclassifed.
+Thus we want to minimize the number we misclassified Good emails(negative case) as spam(positive). That is, False Positive. So we want our confusion matrix's false positve entry to be less than 1% of positive case.
+
+```{r}
+thresholds = seq(0,1, by = 0.01)
+```
+
+
+```{r}
+errs = NULL
+fprs = NULL
+for (i in thresholds){
+  
+  s = i
+  
+  y_pred = ifelse(yhat<i, 0,1)
+  tab = table(y_pred, as.factor(spam_test$type))
+  err = 1-sum(diag(tab))/sum(tab)
+  fpr = tab[[2]]/(tab[[1]]+tab[[2]])
+  if (i==0) errs = mean(err) else errs = rbind(errs,mean(err))
+  if(i==0) fprs = fpr else fprs = rbind(fprs, fpr)
+}
+```
+
+
+Thresholds that gives less than 1% False positive rate.
+```{r}
+thresholds[fprs<0.01]
+```
+
+
+Now out of all those threshold, select good model that gives nice misclassificaiton rate.
+
+```{r}
+errs = NULL
+for (i in thresholds[fprs<0.01]){
+  
+  s = i
+  
+  y_pred = ifelse(yhat<i, 0,1)
+  tab = table(y_pred, as.factor(spam_test$type))
+  err = 1-sum(diag(tab))/sum(tab)
+  fpr = tab[[2]]/(tab[[1]]+tab[[2]])
+  if (i==thresholds[[1]]) errs = mean(err) else errs = rbind(errs,mean(err))
+}
+```
+
+
+Then, we predict y_pred with a new selected threshold.
+
+```{r}
+y_pred = ifelse(yhat<thresholds[fprs<0.01][which.min(errs)],0,1)
+```
+
+Our model's performance.
+
+```{r}
+tab = table(y_pred, as.factor(spam_test$type))
+err = 1-sum(diag(tab))/sum(tab)
+```
+
+Our model misclassification rate.
+
+```{r}
+mean(err)
+```
+
+Our model's False Positive Rate.
+```{r}
+tab[[2]]/(tab[[1]]+tab[[2]])
+```
+
+
+
+
+
+
